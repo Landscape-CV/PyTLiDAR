@@ -28,7 +28,36 @@ import numpy as np
 from collections import deque
 import LeastSquaresFitting.LSF as LSF
 from Utils.Utils import distances_to_line,distances_between_lines,growth_volume_correction,surface_coverage_filtering,surface_coverage2,verticalcat
+import matplotlib.pyplot as plt
 import Utils.Utils as Utils
+
+#CylinderFitting:
+from robpy.covariance import DetMCD
+import rpca.ealm
+import laspy
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.patches import Circle
+import rpca.ialm  # Needed for 3D plotting
+from sklearn.covariance import MinCovDet 
+import ltsfit # https://pypi.org/project/ltsfit/ -- need to cite in paper. 
+import math
+from circle_fit import hyperSVD
+
+
+def plot_cyl(segment_point_cloud):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    
+    ax.scatter(segment_point_cloud[:, 0], segment_point_cloud[:, 1], segment_point_cloud[:, 2], color='green')
+    ax.set_xlabel('X axis')
+    ax.set_ylabel('Y axis')
+    ax.set_zlabel('Z axis')
+    ax.set_title('3D Scatter Plot')
+    fig.axes
+    plt.axis('equal')
+    plt.show()
 
 
 def cylinders(P,cover,segment,inputs):
@@ -246,6 +275,247 @@ def cylinders(P,cover,segment,inputs):
 
     return cylinder
 
+
+
+class RobustCylinderFitting: 
+    def __init__(self):
+        pass
+
+    def fit(self, point_cloud):
+        """
+        Main process step
+        """
+        # Task 1: get cylinder orientation. 
+        point_cloud = self._normalize_pointcloud(point_cloud)
+        pc1, pc2, pc3 = self._get_pcs(point_cloud)
+        length = self._get_length(point_cloud, pc1)
+        
+        # Task 2: Robust circle fitting
+        x, y, r = self._fit_circle(point_cloud, pc2, pc3)
+
+        return x, y, r
+
+
+    def _get_cylinder_orientation(self, point_cloud):
+        """
+        Task 1: Performing RPCA for estimating cylinder orientation
+
+
+        """
+        
+        dense_matrix, sparse_matrix = rpca.ialm.fit(point_cloud, verbose=False)
+        
+        # U, S, Vt = np.linalg.svd(dense_matrix)
+        
+
+        U, S, Vt = np.linalg.svd(dense_matrix, full_matrices=False)
+        # explained_ratios = (S**2) / np.sum(S**2)
+        # for i, ratio in enumerate(explained_ratios):
+        #     print(f"PC{i+1}: {ratio:.4f}")
+
+        # principal_axis_index = np.argmax(explained_ratios)
+        # principal_axis = Vt[principal_axis_index, :]
+
+
+        # - U: left singular vectors — shape (m, m)
+        # - S: singular values — shape (min(m, n),)
+        # - Vt: right singular vectors transposed — shape (n, n)
+
+        first_pc = Vt[0, :] 
+        second_pc = Vt[1, :] 
+        third_pc = Vt[2, :] 
+        # print(first_pc)
+        # print(second_pc)
+        # print(third_pc)
+        # print(pc1.shape)
+        # print(pc2.shape)
+        # print(pc3.shape)
+
+
+
+
+        return first_pc, second_pc, third_pc
+
+    def _get_pcs(self, point_cloud):
+        """
+        Task 1: Using MCD instead for cylinder orientation
+        """
+        
+        mcd = DetMCD()
+        covariance = mcd.calculate_covariance(point_cloud)
+
+        U, S, Vt = np.linalg.svd(covariance, full_matrices=False)
+        print(Vt.shape)
+        first_pc = Vt[0, :] 
+        second_pc = Vt[1, :] 
+        third_pc = Vt[2, :] 
+        print(first_pc)
+        print(second_pc)
+        print(third_pc)
+        return first_pc, second_pc, third_pc
+
+
+    def _normalize_pointcloud(self, pointcloud):
+        """
+        centers the pointcloud around 0,0,0 
+        """
+        mean = np.mean(pointcloud, axis=0)
+        normalized = pointcloud - mean
+
+        return normalized
+    
+    def _get_length(self, cylinder, pc1):
+
+        # proj = dense_matrix @ first_pc   # A is the denoised point cloud
+        # print(proj.shape)
+
+
+        projection = np.dot(cylinder, pc1)
+        print(projection.shape)
+        length = np.max(projection) - np.min(projection)
+
+        # plt.plot(projection)
+        # plt.show()
+        return length
+    
+    def _fit_circle(self, cylinder, pc2, pc3):
+        # Project points onto the orthogonal plane created by pc2, pc3
+        projection1 = np.dot(cylinder, pc2)
+        projection2 = np.dot(cylinder, pc3)
+        circle_projection = np.array([projection1, projection2])
+        circle_projection = np.transpose(circle_projection)
+        # print(circle_projection.shape)
+        fig, ax = plt.subplots()
+
+        ax.scatter(circle_projection[:, 0], circle_projection[:, 1], s=1)
+        ax.axis('equal')
+        # Use Hyper circle fitting method. 
+        # x, y, r, s = hyperSVD(circle_projection)
+        x, y, r = self._RLTS(circle_projection)
+        # Plot circle
+        print(x, y, r*2)
+        circle1 = Circle((x, y), r, edgecolor='blue', facecolor='none', linewidth=2)
+        ax.add_patch(circle1)
+
+
+        x, y, r = self._WRLTS(circle_projection)
+        circle2 = Circle((x, y), r, edgecolor='red', facecolor='none', linewidth=1)
+        ax.add_patch(circle2)
+        plt.show()
+        return x, y, r
+    
+    def _RLTS(self, pointcloud):
+        """
+        Repeated Least Trimmed Square (RLTS)
+        """
+        h_0 = 4
+        p_r = 0.999
+        eps = 0.5
+        h = math.ceil(pointcloud.shape[0] * 0.5)
+
+        # Fit initial circle from randomly selected points
+        indices = np.random.choice(pointcloud.shape[0], size=h_0, replace=False)
+        random_points = pointcloud[indices]
+
+        # Get circle parameters for initial guess
+        print(random_points.shape)
+        x, y, r, s = hyperSVD(random_points)
+
+        e = self._compute_residuals(pointcloud, x, y, r) # Nx3
+
+        # Then we sort the points according to their residuals. 
+        e_sorted_indices = np.argsort(e)
+        sorted_pointcloud = pointcloud[e_sorted_indices]
+        top_h_points = sorted_pointcloud[:h, :]
+
+        # Then repeat the algorithm. 
+        for i in range(100):
+
+            # fig, ax = plt.subplots()
+            # ax.scatter(pointcloud[:, 0], pointcloud[:, 1], s=1)
+            # ax.axis('equal')
+            # circle = Circle((x, y), r, edgecolor='blue', facecolor='none', linewidth=2)
+            # ax.add_patch(circle)
+            # plt.show()
+
+
+            x, y, r, s = hyperSVD(top_h_points)
+            e = self._compute_residuals(pointcloud, x, y, r) # Nx3
+            e_sorted_indices = np.argsort(e)
+            sorted_pointcloud = pointcloud[e_sorted_indices]
+            top_h_points = sorted_pointcloud[:h, :]
+
+        return x, y, r
+
+    def _WRLTS(self, pointcloud):
+        """
+        Weighted Repeated Least Trimmed Square (WRLTS)
+        """
+        h_0 = 4
+        p_r = 0.999
+        eps = 0.5
+        h = math.ceil(pointcloud.shape[0] * 0.5)
+
+        # Fit initial circle from randomly selected points
+        indices = np.random.choice(pointcloud.shape[0], size=h_0, replace=False)
+        random_points = pointcloud[indices]
+
+        # Get circle parameters for initial guess
+        print(random_points.shape)
+        x, y, r, s = hyperSVD(random_points)
+
+        e = self._compute_residuals(pointcloud, x, y, r) # Nx3
+
+        # Then we sort the points according to their residuals. 
+        e_sorted_indices = np.argsort(e)
+        sorted_pointcloud = pointcloud[e_sorted_indices]
+        top_h_points = sorted_pointcloud[:h, :]
+
+        # Then repeat the algorithm. 
+        for i in range(100):
+            x, y, r, s = hyperSVD(top_h_points)
+            e = self._compute_residuals(pointcloud, x, y, r) # Nx3
+
+            #Weighting: 
+            weights = self._bi_square_weights(e)
+
+            e_weighted = weights*e
+
+            e_sorted_indices = np.argsort(e_weighted)
+            sorted_pointcloud = pointcloud[e_sorted_indices]
+            top_h_points = sorted_pointcloud[:h, :]
+
+        return x, y, r
+
+    def _bi_square_weights(self, residuals):
+        """
+        Tukey's well-known robust'bi-square' weight function
+        """
+        e_star = residuals / (6*np.median(np.abs(residuals)))
+        # weights = np.zeros(e_star.shape)
+
+        weights = np.where(e_star < 1, np.square(1-np.square(e_star)), 0)
+
+        return weights
+
+        
+    def _compute_residuals(self, q, a0, b0, r0):
+        """
+        residual computation equation: 
+        """
+        e = np.sqrt(np.square(q[:, 0] - a0) - np.square(q[:, 1] - b0)) - r0
+        return e
+
+
+
+        # print( x, y, r, s)
+
+
+    # def _get_length(self, )
+
+
+
+
 # @jit(nopython=True, cache=True)
 def cylinder_fitting(P, Points, Ind, nl, si):
     """
@@ -264,6 +534,23 @@ def cylinder_fitting(P, Points, Ind, nl, si):
 
     """
 
+    # Display the segment. 
+    
+    print('--------------------------------------')
+    # print(P.shape)
+    # print(Points.shape)
+    # print(Ind.shape)
+    # print(nl)
+    # print(si)
+    segment_point_cloud = P[Points]
+    np.savetxt(f"segments/segment_{si}.xyz", segment_point_cloud)
+    # cylinder_fitter = RobustCylinderFitting()   
+    # x, y, r = cylinder_fitter.fit(segment_point_cloud)
+    # print('x', x)
+    # print('y', y)
+    # print('r', r)
+    # plot_cyl(segment_point_cloud)
+    print('--------------------------------------')
 
     CylTop = np.zeros(3)  
     #print("nl ", nl)

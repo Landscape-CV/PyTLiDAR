@@ -1120,13 +1120,7 @@ def process_entire_pointcloud(combined_cloud: Ecomodel):
     combined_cloud.subdivide_tiles(cube_size = 3)
     combined_cloud.filter_ground(combined_cloud.tiles.flatten())
     combined_cloud.recombine_tiles()
-    # # # # for tile in combined_cloud._raw_tiles:
-    # # # #     tile.to(tile.device)
-    # # # # combined_cloud.subdivide_tiles(cube_size = 1)
-    # # # # print("Ground filtered")
-    # # # # combined_cloud.denoise()
-    # # # # combined_cloud.recombine_tiles()
-    # # # # tile.to_xyz("filtered.xyz")
+
     for tile in combined_cloud._raw_tiles:
         tile.to(tile.device)
     combined_cloud.pickle("test_model_ground_removed.pickle")
@@ -1134,17 +1128,11 @@ def process_entire_pointcloud(combined_cloud: Ecomodel):
     combined_cloud.subdivide_tiles(cube_size = 15)
     combined_cloud.remove_duplicate_points()
 
-    
     combined_cloud.segment_trees()
     combined_cloud.pickle("test_model_trees_segmented.pickle")
-    # combined_cloud = Ecomodel.unpickle("test_model_trees_segmented.pickle")
-
-    # combined_cloud.get_qsm_segments(40000)
-    # combined_cloud.recombine_tiles()
-    # combined_cloud.pickle("test_model_post_qsm_correct_segments.pickle")
-    # combined_cloud = Ecomodel.unpickle("test_model_post_qsm_correct_segments.pickle")
 
     combined_cloud.segment_trees()
+    combined_cloud.calc_cylinders()
     
 
 

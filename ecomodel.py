@@ -215,7 +215,7 @@ class Ecomodel:
 
             print("Segment Cloud")
             start = time.time()
-            segment_point_cloud(tile,max_dist=.2)
+            segment_point_cloud(tile)
             mask = tile.segment_labels >-1#filters out points that could not be connected, ideal will segment better and this will be uneccesary
             tile.cloud = tile.cloud[mask]
             tile.point_data = tile.point_data[mask]

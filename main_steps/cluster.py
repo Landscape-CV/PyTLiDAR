@@ -229,7 +229,7 @@ def segment_point_cloud(tile, max_dist = .16, base_height = .3, layer_size =.3):
 
     # unique_masks, inverse_indices = torch.unique(tile.cover_sets, return_inverse=True)
 
-    num_masks = torch.max(tile.cover_sets)#torch.bincount(tile.cover_sets)
+    num_masks = torch.max(tile.cover_sets)+1#torch.bincount(tile.cover_sets)
     dim = tile.point_data.size(1)
 
 
@@ -371,13 +371,14 @@ def segment_point_cloud(tile, max_dist = .16, base_height = .3, layer_size =.3):
         # if  len(base_set[:,2]<min_Z+.3)>1:
         if  len(base_set[:,2])>5:
             filtered_tree_bases.append(base)
+    
     filtered_tree_bases=combine_close_bases(segments,center_points,filtered_tree_bases,.2)
     filtered_tree_bases = filtered_tree_bases.cpu().numpy()
 
     # filtered_tree_bases=combine_close_bases(segments,center_points,tree_bases)
 
     
-    
+    print(filtered_tree_bases)
     print("Connect Segments")
     segments,not_explored = connect_segments(pcd_tree,pcd,segments,full_not_explored,filtered_tree_bases,max_dist*2,network,False,True)
     print("Connect More Segments")
@@ -570,10 +571,19 @@ def combine_close_bases(segments,center_points,bases, bound = .1):
                 segments[np.isin(segments,bases[overlap].cpu().numpy())]=bases[i].cpu().numpy()
                 new_bases[overlap] = bases[i]
                 changed+=overlap
+        
+
+        
         if not torch.all(new_bases == bases):
             again =True
         else:
             again=False
+        bases =torch.unique(new_bases).clone()
+        new_bases = bases.clone()
+        for i in range(len(bases)):
+            if np.sum(segments ==bases[i].cpu().numpy()) ==0:
+                new_bases[i] =-1
+        new_bases = new_bases[new_bases>-1]
         bases =torch.unique(new_bases).clone()
     return torch.unique(new_bases)
 
@@ -653,7 +663,7 @@ def get_minimums(segments,center_points):
     minimums = np.zeros((len(np.unique(segments)),3))
     for i,base in enumerate(np.unique(segments)):
         point_data = center_points[segments ==base]
-        minimums[i]=np.where(segments == base)[0][point_data[np.where(segments == base)][:,2].argmin()]
+        minimums[i]=np.where(segments == base)[0][point_data[:,2].argmin()]
     return minimums
         
             

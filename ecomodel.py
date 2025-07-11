@@ -1,6 +1,6 @@
 import warnings
-from skimage.morphology import skeletonize
-import sknw
+# from skimage.morphology import skeletonize
+# import sknw
 warnings.filterwarnings('ignore')
 import Utils.Utils as Utils
 import numpy as np
@@ -142,9 +142,10 @@ class Ecomodel:
             try:
                 line.fit(band[:,0:2],band[:,2]) # Get a
             except Exception as e:
+                print(e)
                 tile.to_xyz('failed_tile.xyz')
                 print("Save successful")
-                exit()
+
 
             
             if using_pt:
@@ -155,8 +156,10 @@ class Ecomodel:
             # I = tile.cloud[:, 2] > band_max+offset
             point_data = tile.point_data[I]
             tile.cloud = tile.cloud[I]
-            new_min_z = min(new_min_z, tile.cloud[:, 2].min())
             tile.point_data = point_data
+            # if len(tile.cloud)
+            new_min_z = min(new_min_z, tile.cloud[:, 2].min())
+            
             # tile.to_xyz("filtered.xyz")
             
         self.min_z = new_min_z
@@ -212,7 +215,7 @@ class Ecomodel:
 
             print("Segment Cloud")
             start = time.time()
-            segment_point_cloud(tile)
+            segment_point_cloud(tile,max_dist=.2)
             mask = tile.segment_labels >-1#filters out points that could not be connected, ideal will segment better and this will be uneccesary
             tile.cloud = tile.cloud[mask]
             tile.point_data = tile.point_data[mask]
@@ -718,8 +721,13 @@ class Ecomodel:
 
 
         tiles = self.tiles.flatten()
+        valid_tiles = []
         for tile in tiles:
+            if tile == 0:
+                continue
             tile.numpy()
+            valid_tiles.append(tile)
+        tiles = valid_tiles
         base_tile = tiles[0]
         base_tile.cloud = np.concatenate([tile.cloud for tile in tiles])
         base_tile.point_data = np.concatenate([tile.point_data for tile in tiles])
@@ -866,7 +874,7 @@ class Tile:
         self.branch_orders = np.array([])
 
     def remove_duplicate_points(self):
-        cloud, mask = np.unique(self.cloud,return_index = True, axis=0)
+        cloud, mask = np.unique(self.cloud,return_index = True, axis=0,)
         self.point_data = self.point_data[mask]
         self.cloud = self.point_data[:,:3]
         self.cover_sets = self.cover_sets[mask]
@@ -1127,17 +1135,19 @@ def process_entire_pointcloud(combined_cloud: Ecomodel):
     combined_cloud = Ecomodel.unpickle("test_model_ground_removed.pickle")
     combined_cloud.subdivide_tiles(cube_size = 15)
     combined_cloud.remove_duplicate_points()
+    combined_cloud.pickle("test_model_pre_segmentation.pickle")
+    combined_cloud = Ecomodel.unpickle("test_model_pre_segmentation.pickle")
 
     combined_cloud.segment_trees()
     combined_cloud.pickle("test_model_trees_segmented.pickle")
-
-    combined_cloud.segment_trees()
+    combined_cloud.unpickle("test_model_trees_segmented.pickle")
+    combined_cloud.get_qsm_segments()
     combined_cloud.calc_cylinders()
     
 
 
 if __name__ == "__main__":
-    folder = r"G:\Projects\TreeCanopyLidar\Datasets\tiled_scans_subset"
+    folder = r"C:\Users\johnh\Documents\LiDAR\tiled_scans"
     model = Ecomodel()
     combined_cloud = Ecomodel.combine_las_files(folder,model)
     process_entire_pointcloud(combined_cloud)
@@ -1156,13 +1166,13 @@ if __name__ == "__main__":
     # combined_cloud.subdivide_tiles(cube_size = 3)
     # combined_cloud.filter_ground(combined_cloud.tiles.flatten())
     # combined_cloud.recombine_tiles()
-    # # for tile in combined_cloud._raw_tiles:
-    # #     tile.to(tile.device)
+    # for tile in combined_cloud._raw_tiles:
+    #     tile.to(tile.device)
     # # combined_cloud.subdivide_tiles(cube_size = 1)
     # # print("Ground filtered")
     # # combined_cloud.denoise()
     # # combined_cloud.recombine_tiles()
-    # # tile.to_xyz("filtered.xyz")
+    # tile.to_xyz("filtered.xyz")
     # for tile in combined_cloud._raw_tiles:
     #     tile.to(tile.device)
     # combined_cloud.pickle("test_model_ground_removed.pickle")

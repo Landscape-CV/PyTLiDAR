@@ -38,10 +38,20 @@ import dotenv
 from GBSeparation.remove_leaves import LeafRemover
 from robpy.covariance import DetMCD,FastMCD
 from sklearn.covariance import MinCovDet
+
+from Utils.RobustCylinderFitting import RobustCylinderFitter
+
 dotenv.load_dotenv()
 
 class Ecomodel:
+    """The Ecomodel class processes and creates html and pdf reports of a large scale point cloud. 
+
+    A processing pipeline extracts the information from raw lidar data of trees. 
+
+    Attributes: 
     
+    
+    """
     def __init__(self):
         self.device = 'mps' if torch.backends.mps.is_available() else ('cuda' if torch.cuda.is_available() else 'cpu')
         self._raw_tiles = []
@@ -125,8 +135,18 @@ class Ecomodel:
             ground_start = min
             line = linear_model.RANSACRegressor(random_state = 0)
             band = band[band[:,2] < float(band_max)-.2*float(band_size)]
+            print(type(band))
+            print(band.shape)
+
+            # Use the RANSAC algorithm to find a model that matches the data of the???
+            try:
+                line.fit(band[:,0:2],band[:,2]) # Get a
+            except Exception as e:
+                tile.to_xyz('failed_tile.xyz')
+                print("Save successful")
+                exit()
+
             
-            line.fit(band[:,0:2],band[:,2])
             if using_pt:
                 ground_line = torch.Tensor(line.predict(tile.get_cloud_as_array()[:, 0:2])).to(self.device)
                 I = tile.cloud[:, 2] > ground_line+offset
@@ -482,6 +502,46 @@ class Ecomodel:
 
             return cylinder, cyl_plot
     
+    def calc_cylinders(self):
+        """
+        Computes the cylinders
+
+        Parameters: 
+            tile: 
+        """
+
+        fitter = RobustCylinderFitter()
+
+        for i,tile in enumerate(self.tiles.flatten()):
+            tile:Tile
+
+            total_segments = np.max(tile.cluster_labels)
+
+            cylinder_starts = np.zeros((3, total_segments))
+            cylinder_radii = np.zeros(total_segments)
+            cylinder_axes = np.zeros((3, total_segments))
+            cylinder_lengths = np.zeros(total_segments)
+
+            for segment_index in range(total_segments):
+                segment_indices = np.argwhere(tile.cluster_labels == segment_index)
+                segment = tile.cloud[segment_indices]
+
+                start, axis, r, l = fitter.fit(segment)
+
+                cylinder_starts[:, segment_index] = start
+                cylinder_axes[:, segment_index] = axis
+                cylinder_lengths[:, segment_index] = l
+                cylinder_radii[:, segment_index] = r
+
+
+            tile.cylinder_starts = cylinder_starts
+            tile.cylinder_radii = cylinder_radii
+            tile.cylinder_axes = cylinder_axes
+            tile.cylinder_lengths = cylinder_radii
+
+
+
+
     def calc_volumes(self,tile, segments,min_bound,max_bound):
         """
         UNDER CONSTRUCTION, NOT USED
@@ -691,7 +751,7 @@ class Ecomodel:
            
     
     @staticmethod 
-    def combine_las_files(folder,ecomodel, intensity_threshold = 0):
+    def combine_las_files(folder,ecomodel, intensity_threshold = 0) -> 'Ecomodel':
         """
         Combine multiple LAS or LAZ files into a single point cloud.
         Parameters:     
@@ -766,6 +826,10 @@ class Ecomodel:
 
 
 class Tile:
+    """A Tile represents a subset of the lidar scan data, and stores the attributes relavent to that tile specifically (cylinders, leafs, etc. )
+    
+    
+    """
 
     def __init__(self, cloud, point_data = None,contains_ground = False):
         self.cluster_labels = np.zeros(len(cloud))
@@ -998,11 +1062,97 @@ class Tile:
 
 
     
-        
+def process_entire_pointcloud(combined_cloud: Ecomodel):
+    """
+    Processes the point cloud and extracts tree and leaf metrics. Stores data in 'X' files.  
+
+    Arguments:
+        pointcloud: Ecomodel object. I think it should be a (Nx3) numpy array of points representing entire island
+
+    Returns:
+        None
+    """
+    # Combine tiles
+    # subdivide all tiles
+    # Remove ground
+    # normalize tiles
+    
+
+    
+    # combined_cloud._raw_tiles[0].to_xyz("raw_tiles_0.xyz")
+    # combined_cloud.subdivide_tiles(cube_size = 3)
+    # combined_cloud.tiles[8, 4].to_xyz("raw_tiles_sub_0.xyz")
+    # combined_cloud.filter_ground(combined_cloud.tiles.flatten(),.5)
+
+    # Processing Step for All tiles, removes ground, 
+
+    # combined_cloud.normalize_raw_tiles()
+    # for tile in combined_cloud._raw_tiles:
+    #     tile.to(tile.device)
+    # # combined_cloud.denoise()
+    # combined_cloud.subdivide_tiles(cube_size = 3)
+    # combined_cloud.filter_ground(combined_cloud.tiles.flatten())
+    # combined_cloud.tiles[0, 0].to_xyz("removed_gound_etc.xyz")
+    # combined_cloud.recombine_tiles()
+    # for tile in combined_cloud._raw_tiles:
+    #     tile.to(tile.device)
+    # combined_cloud.pickle("test_model.pickle")
+    # combined_cloud = Ecomodel.unpickle("test_model.pickle")
+    # combined_cloud.subdivide_tiles(cube_size = 15)
+    
+
+    # combined_cloud = Ecomodel.unpickle("test_model_ground_removed.pickle")
+    # combined_cloud.subdivide_tiles(cube_size = 15)
+    # combined_cloud.tiles[0,0].to_xyz('FromJohn.xyz')
+
+
+    # ---------------
+
+    # combined_cloud = Ecomodel.combine_las_files(folder,model)
+
+    combined_cloud.filter_ground(combined_cloud._raw_tiles,.5)
+    combined_cloud.normalize_raw_tiles()
+    
+    for tile in combined_cloud._raw_tiles:
+        tile.to(tile.device)
+    
+    
+    combined_cloud.subdivide_tiles(cube_size = 3)
+    combined_cloud.filter_ground(combined_cloud.tiles.flatten())
+    combined_cloud.recombine_tiles()
+    # # # # for tile in combined_cloud._raw_tiles:
+    # # # #     tile.to(tile.device)
+    # # # # combined_cloud.subdivide_tiles(cube_size = 1)
+    # # # # print("Ground filtered")
+    # # # # combined_cloud.denoise()
+    # # # # combined_cloud.recombine_tiles()
+    # # # # tile.to_xyz("filtered.xyz")
+    for tile in combined_cloud._raw_tiles:
+        tile.to(tile.device)
+    combined_cloud.pickle("test_model_ground_removed.pickle")
+    combined_cloud = Ecomodel.unpickle("test_model_ground_removed.pickle")
+    combined_cloud.subdivide_tiles(cube_size = 15)
+    combined_cloud.remove_duplicate_points()
+
+    
+    combined_cloud.segment_trees()
+    combined_cloud.pickle("test_model_trees_segmented.pickle")
+    # combined_cloud = Ecomodel.unpickle("test_model_trees_segmented.pickle")
+
+    # combined_cloud.get_qsm_segments(40000)
+    # combined_cloud.recombine_tiles()
+    # combined_cloud.pickle("test_model_post_qsm_correct_segments.pickle")
+    # combined_cloud = Ecomodel.unpickle("test_model_post_qsm_correct_segments.pickle")
+
+    combined_cloud.segment_trees()
     
 
 
 if __name__ == "__main__":
+    folder = r"G:\Projects\TreeCanopyLidar\Datasets\tiled_scans_subset"
+    model = Ecomodel()
+    combined_cloud = Ecomodel.combine_las_files(folder,model)
+    process_entire_pointcloud(combined_cloud)
     # Example usage
     # folder = os.environ.get("DATA_FOLDER_FILEPATH") + "tiled_scans"
     # model = Ecomodel()
@@ -1040,16 +1190,16 @@ if __name__ == "__main__":
     # combined_cloud.get_qsm_segments(40000)
     # combined_cloud.recombine_tiles()
     # combined_cloud.pickle("test_model_post_qsm_correct_segments.pickle")
-    combined_cloud = Ecomodel.unpickle("test_model_post_qsm_correct_segments.pickle")
+    # combined_cloud = Ecomodel.unpickle("test_model_post_qsm_correct_segments.pickle")
 
-    # Palm
-    # cylinder,base_plot = combined_cloud.get_voxel(-15,-3,-3,5,fidelity = .3)
-    # # Small Voxel
-    # cylinder,base_plot = combined_cloud.get_voxel(-11,1,-1,3,fidelity = 1)
-    # # Large Voxel
-    cylinder,base_plot = combined_cloud.get_voxel(-2,-2,-3,2,fidelity = .6)
-    base_plot.write_html("results/segment_test_plot_no_continuation.html")
-    cylinders_line_plotting(cylinder, scale_factor=1,file_name="test_plot",base_fig=base_plot)
+    # # Palm
+    # # cylinder,base_plot = combined_cloud.get_voxel(-15,-3,-3,5,fidelity = .3)
+    # # # Small Voxel
+    # # cylinder,base_plot = combined_cloud.get_voxel(-11,1,-1,3,fidelity = 1)
+    # # # Large Voxel
+    # cylinder,base_plot = combined_cloud.get_voxel(-2,-2,-3,2,fidelity = .6)
+    # base_plot.write_html("results/segment_test_plot_no_continuation.html")
+    # cylinders_line_plotting(cylinder, scale_factor=1,file_name="test_plot",base_fig=base_plot)
     # cylinders_plotting(cylinder,base_fig=base_plot)
     # combined_cloud.calc_volumes()
     # subdivided_cloud = combined_cloud.subdivide_tiles(cube_size = 10)

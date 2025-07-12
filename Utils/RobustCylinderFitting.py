@@ -1,4 +1,4 @@
-from robpy.covariance import DetMCD
+from robpy.covariance import DetMCD,FastMCD
 import numpy as np
 import math
 from circle_fit import hyperSVD
@@ -71,8 +71,15 @@ class RobustCylinderFitter:
         """
         Task 1: Using MCD instead for cylinder orientation
         """
-        mcd = DetMCD()
-        covariance = mcd.calculate_covariance(point_cloud)
+        mcd = FastMCD()
+        try:
+            covariance = mcd.calculate_covariance(point_cloud)
+        except:
+            try:
+                covariance = DetMCD().calculate_covariance(point_cloud)
+            except:
+                raise Exception("Failed to find covariance")
+                
         U, S, Vt = np.linalg.svd(covariance, full_matrices=False)
         first_pc = Vt[0, :] 
         second_pc = Vt[1, :] 
@@ -123,7 +130,6 @@ class RobustCylinderFitter:
         random_points = point_cloud[indices]
 
         # Get circle parameters for initial guess
-        print(random_points.shape)
         x, y, r, s = hyperSVD(random_points)
 
         e = self._compute_residuals(point_cloud, x, y, r) # Nx3
@@ -157,7 +163,6 @@ class RobustCylinderFitter:
         random_points = point_cloud[indices]
 
         # Get circle parameters for initial guess
-        print(random_points.shape)
         x, y, r, s = hyperSVD(random_points)
 
         e = self._compute_residuals(point_cloud, x, y, r) # Nx3
@@ -166,9 +171,12 @@ class RobustCylinderFitter:
         e_sorted_indices = np.argsort(e)
         sorted_pointcloud = point_cloud[e_sorted_indices]
         top_h_points = sorted_pointcloud[:h, :]
+        
 
         # Then iterate to find better points.
         for i in range(100):
+            if h<4:
+                break
             x, y, r, s = hyperSVD(top_h_points)
             e = self._compute_residuals(point_cloud, x, y, r) # Nx3
 

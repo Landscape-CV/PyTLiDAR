@@ -219,9 +219,21 @@ def connect_covers(tile, cover,  z_thresh=2, max_dist =.25):
 
 
 def segment_point_cloud(tile, max_dist = .16, base_height = .3, layer_size =.3):
+    """
+    Segments the cloud into the
+
+    Parameters: 
+        max_dist (float): 
+        base_height
+        layer_size 
+    
+    """
     tile.to(tile.device)
     tile.cover_sets = torch.Tensor(tile.cover_sets).to(tile.device).to(int)
     I = torch.argsort(tile.cover_sets)
+    
+    # Reassign the tile's point cloud to the points in the cover sets. 
+
     tile.cover_sets = tile.cover_sets[I]
     tile.point_data = tile.point_data[I]
     tile.cloud = tile.cloud[I]
@@ -245,14 +257,14 @@ def segment_point_cloud(tile, max_dist = .16, base_height = .3, layer_size =.3):
     min_points = torch.zeros((num_masks, dim), device=tile.point_data.device)
    
     min_points.scatter_reduce_(
-    0, 
-    tile.cover_sets.unsqueeze(-1).expand(-1, dim), 
-    tile.point_data, 
-    reduce='min',
-    include_self=False
-    )
+        0, 
+        tile.cover_sets.unsqueeze(-1).expand(-1, dim), 
+        tile.point_data, 
+        reduce='min',
+        include_self=False
+        )
     center_points = min_points.clone()
-    
+        
     
     
     cloud = center_points[:,:3].cpu().numpy()
@@ -378,7 +390,7 @@ def segment_point_cloud(tile, max_dist = .16, base_height = .3, layer_size =.3):
     # filtered_tree_bases=combine_close_bases(segments,center_points,tree_bases)
 
     
-    print(filtered_tree_bases)
+    print("Filtered Tree Bases", filtered_tree_bases)
     print("Connect Segments")
     segments,not_explored = connect_segments(pcd_tree,pcd,segments,full_not_explored,filtered_tree_bases,max_dist*2,network,False,True)
     print("Connect More Segments")
@@ -387,11 +399,11 @@ def segment_point_cloud(tile, max_dist = .16, base_height = .3, layer_size =.3):
     segments,not_explored = connect_segments(pcd_tree,pcd,segments,not_explored,filtered_tree_bases,max_dist*1.5,network,True,True)
     print("Fix Overlap")
     segments = fix_overlap(segments,center_points,network)
-    print(len(segments))
+    print("Number of segments", len(segments))
     unassigned_sets = np.where(~np.isin(segments,filtered_tree_bases))
     segments[unassigned_sets]=-1
 
-    print(np.unique(segments))
+    print("Unique Segments", np.unique(segments))
     I = torch.argsort(tile.cover_sets)
     tile.cover_sets = tile.cover_sets[I]
     tile.point_data = tile.point_data[I]
@@ -407,7 +419,7 @@ def segment_point_cloud(tile, max_dist = .16, base_height = .3, layer_size =.3):
     tile.segment_labels= torch.repeat_interleave(segments, num_indices)
     tile.cover_sets = tile.cover_sets.cpu().numpy()
     tile.numpy()
-    print(np.unique(tile.segment_labels))
+    print('Unique Segment Labels', np.unique(tile.segment_labels))
     # tile.cluster_labels = segments
     # tile.cloud = cloud
     

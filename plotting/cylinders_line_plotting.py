@@ -35,7 +35,7 @@ def cylinders_line_plotting(cylinders, scale_factor=1, num_points = 20, file_nam
         length = cylinders['length'][i]
         color = 'blue'  # Default color
 
-        if radius <= 0.075:
+        if True:#radius <= 0.075:
             # Render as line
             end = start + np.array(axis) * length
 
@@ -49,8 +49,8 @@ def cylinders_line_plotting(cylinders, scale_factor=1, num_points = 20, file_nam
                 y=y_line,
                 z=z_line,
                 mode='lines',
-                # line=dict(color=color, width=1),
-                line=dict(color=color, width=max(.001,scale_factor * radius * 2)),
+                line=dict(color=color, width=1),
+                # line=dict(color=color, width=max(.001,scale_factor * radius * 2)),
                 #marker=dict(
                 #    size=scale_factor * radius,
                 #    color=color,

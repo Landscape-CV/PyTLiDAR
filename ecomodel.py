@@ -327,7 +327,7 @@ class Ecomodel:
                 print("Tree sets")
                 cover1, Base, Forb = tree_sets(tree_cloud, cover1, qsm_input)
                 print("Segments")
-                segment1 = segments( cover1, Base, Forb,qsm=True)
+                segment1 = segments( cover1, Base, Forb,qsm=False)
                 # print("Correct")
                 # segment1 =correct_segments(tree_cloud,cover1,segment1,qsm_input,0,1,1)#
                 # RS = relative_size(tree_cloud, cover1, segment1)
@@ -379,7 +379,7 @@ class Ecomodel:
                     if len(segment_cloud)<30:
                         continue
                     
-                    lexsort_indices = np.lexsort((segment_cloud[:, 2], segment_cloud[:, 1], segment_cloud[:, 0]),axis=0)
+                    lexsort_indices = np.lexsort((segment_cloud[:, 2], segment_cloud[:, 1], segment_cloud[:, 0]),axis=0,)
                     segment_cloud = segment_cloud[lexsort_indices]
                     # pcd.points = o3d.utility.Vector3dVector(segment_cloud)
                     # db_labels = np.array(pcd.cluster_dbscan(eps=0.05, min_points=10))
@@ -388,7 +388,7 @@ class Ecomodel:
                     # tile.cluster_labels[tile_db_mask]=-2
 
                     
-                    sub_segments = Utils.split_segments(segment_cloud,5,30)
+                    sub_segments = Utils.split_segments(segment_cloud,5,10)
                     while np.sum(sub_segments)>len(sub_segments)/5:
 
                         
@@ -404,7 +404,7 @@ class Ecomodel:
                         segment_cloud = segment_cloud[lexsort_indices]
                         
                         # sub_segments = [1]
-                        sub_segments = Utils.split_segments(segment_cloud,5,30)
+                        sub_segments = Utils.split_segments(segment_cloud,5,10)
 
 
                 cloud_segments = new_cloud_segments+max_segment
@@ -489,7 +489,7 @@ class Ecomodel:
             tile.reset_cylinders()
             self.calc_volumes(tile,np.unique(labels),cube_min,cube_max)
             labels = tile.cluster_labels[point_mask]
-            mask = np.all((tile.cylinder_starts >= cube_min) & (tile.cylinder_starts <= cube_max), axis=1)
+            mask = np.ones(len(tile.cylinder_starts),dtype = bool)#np.all((tile.cylinder_starts >= cube_min) & (tile.cylinder_starts <= cube_max), axis=1)
             cylinder_starts = tile.cylinder_starts[mask]
             cylinder_radii = tile.cylinder_radii[mask]
             cylinder_axes = tile.cylinder_axes[mask]
@@ -515,32 +515,45 @@ class Ecomodel:
 
         fitter = RobustCylinderFitter()
 
-        for i,tile in enumerate(self.tiles.flatten()):
+        for i,tile in enumerate(self._raw_tiles):#enumerate(self.tiles.flatten()):
             tile:Tile
 
             total_segments = np.max(tile.cluster_labels)
 
-            cylinder_starts = np.zeros((3, total_segments))
-            cylinder_radii = np.zeros(total_segments)
-            cylinder_axes = np.zeros((3, total_segments))
-            cylinder_lengths = np.zeros(total_segments)
 
-            for segment_index in range(total_segments):
-                segment_indices = np.argwhere(tile.cluster_labels == segment_index)
+
+            for segment_index in np.unique(tile.cluster_labels):
+                print(segment_index)
+                if segment_index < 0:
+                    continue
+                
+
+                segment_indices = np.where(tile.cluster_labels == segment_index)[0]
                 segment = tile.cloud[segment_indices]
+                dist =cdist(segment,segment)
+                np.fill_diagonal(dist,1.0)
+                avg_closest_point_dist = np.mean(np.min(dist,axis = 1))
+                if avg_closest_point_dist > .02: #can make this a parameter
+                    tile.cluster_labels[segment_indices]=-2
+                    continue
+                if len(segment)<5:
+                    continue
+                
+                try:
+                    start, axis, r, l = fitter.fit(segment)
+                except Exception as E:
+                    if "Failed to find covariance" not in str(E):
+                        raise E
+                    print("Failed to create cylinder: ",E)
+                    continue
 
-                start, axis, r, l = fitter.fit(segment)
-
-                cylinder_starts[:, segment_index] = start
-                cylinder_axes[:, segment_index] = axis
-                cylinder_lengths[:, segment_index] = l
-                cylinder_radii[:, segment_index] = r
+                tile.cylinder_starts = np.concatenate([tile.cylinder_starts,np.array([start])])
+                tile.cylinder_axes = np.concatenate([tile.cylinder_axes,np.array([axis])])
+                tile.cylinder_lengths = np.append(tile.cylinder_lengths,l)
+                tile.cylinder_radii = np.append(tile.cylinder_radii,r)
 
 
-            tile.cylinder_starts = cylinder_starts
-            tile.cylinder_radii = cylinder_radii
-            tile.cylinder_axes = cylinder_axes
-            tile.cylinder_lengths = cylinder_radii
+            
 
 
 
@@ -558,6 +571,7 @@ class Ecomodel:
         range_mask = np.arange(len(tile.cluster_labels))
         mcd = FastMCD()
 
+        fitter = RobustCylinderFitter()
         for label in np.unique(segments):
             if label <0:
                 continue
@@ -588,48 +602,26 @@ class Ecomodel:
                 tile.cluster_labels[seg_mask]=-1
                 continue
 
-            
-            c0 = {}
-
-            # box = np.asarray(obb.get_box_points())
-
-            
-            highest_point = Q0[np.argmax(Q0[:,2])]
             lowest_point = Q0[np.argmin(Q0[:,2])]
-            # Axis = highest_point-lowest_point
-
-            # print(f"finding axis for {label}, segment len{len(Q0)}")
-            # print("covariance")
-            try:
-                covariance = mcd.calculate_covariance(Q0)
-            except:
-                try:
-                    covariance = DetMCD().calculate_covariance(Q0)
-                except:
-                    print("Failed")
+            if len(Q0)<5:
                     continue
-            # covariance = MinCovDet.fit(Q0).covariance_
-            # print("svd")
-            U, S, Vt = np.linalg.svd(covariance, full_matrices=False)
-            # print("rest")
-            first_pc = Vt[0, :] 
-            second_pc = Vt[1, :] 
-            third_pc = Vt[2, :] 
-            Axis = first_pc
-
-            c0['axis'] = Axis / np.linalg.norm(Axis)  # normalized
             
-            c0['start'] = lowest_point
+            try:
+                start, axis, r, l = fitter.fit(Q0)
+            except Exception as E:
+                if "Failed to find covariance" not in str(E):
+                    raise E
+                print("Failed to create cylinder: ",E)
+                continue
 
-            c0['length'] = np.linalg.norm(Axis)
-
-
-
+            tile.cylinder_starts = np.concatenate([tile.cylinder_starts,np.array([start])])
+            tile.cylinder_axes = np.concatenate([tile.cylinder_axes,np.array([axis])])
+            tile.cylinder_lengths = np.append(tile.cylinder_lengths,l)
+            tile.cylinder_radii = np.append(tile.cylinder_radii,r)
             
-            tile.cylinder_starts =np.concatenate([tile.cylinder_starts,np.array([lowest_point])])
-            tile.cylinder_radii = np.append(tile.cylinder_radii,float(np.min(obb.extent)))
-            tile.cylinder_axes = np.concatenate([tile.cylinder_axes,np.array([Axis / np.linalg.norm(Axis)])])
-            tile.cylinder_lengths = np.append(tile.cylinder_lengths,float(np.max(obb.extent)))
+            
+            
+           
             
                
             
@@ -1118,39 +1110,43 @@ def process_entire_pointcloud(combined_cloud: Ecomodel):
 
     # combined_cloud = Ecomodel.combine_las_files(folder,model)
 
-    combined_cloud.filter_ground(combined_cloud._raw_tiles,.5)
-    combined_cloud.normalize_raw_tiles()
+    # combined_cloud.filter_ground(combined_cloud._raw_tiles,.5)
+    # combined_cloud.normalize_raw_tiles()
     
-    for tile in combined_cloud._raw_tiles:
-        tile.to(tile.device)
+    # for tile in combined_cloud._raw_tiles:
+    #     tile.to(tile.device)
     
     
-    combined_cloud.subdivide_tiles(cube_size = 3)
-    combined_cloud.filter_ground(combined_cloud.tiles.flatten())
-    combined_cloud.recombine_tiles()
+    # combined_cloud.subdivide_tiles(cube_size = 3)
+    # combined_cloud.filter_ground(combined_cloud.tiles.flatten())
+    # combined_cloud.recombine_tiles()
 
-    for tile in combined_cloud._raw_tiles:
-        tile.to(tile.device)
-    combined_cloud.pickle("test_model_ground_removed.pickle")
-    combined_cloud = Ecomodel.unpickle("test_model_ground_removed.pickle")
-    combined_cloud.subdivide_tiles(cube_size = 15)
-    combined_cloud.remove_duplicate_points()
-    combined_cloud.pickle("test_model_pre_segmentation.pickle")
-    combined_cloud = Ecomodel.unpickle("test_model_pre_segmentation.pickle")
+    # for tile in combined_cloud._raw_tiles:
+    #     tile.to(tile.device)
+    # combined_cloud.pickle("test_model_ground_removed.pickle")
+    # combined_cloud = Ecomodel.unpickle("test_model_ground_removed.pickle")
+    # combined_cloud.subdivide_tiles(cube_size = 15)
+    # combined_cloud.remove_duplicate_points()
+    # combined_cloud.pickle("test_model_pre_segmentation.pickle")
+    # combined_cloud = Ecomodel.unpickle("test_model_pre_segmentation.pickle")
 
-    combined_cloud.segment_trees()
-    combined_cloud.pickle("test_model_trees_segmented.pickle")
-    combined_cloud.unpickle("test_model_trees_segmented.pickle")
-    combined_cloud.get_qsm_segments()
-    combined_cloud.calc_cylinders()
+    # combined_cloud.segment_trees()
+    # combined_cloud.pickle("test_model_trees_segmented.pickle")
+    # combined_cloud.unpickle("test_model_trees_segmented.pickle")
+    # combined_cloud.get_qsm_segments()
+    combined_cloud = Ecomodel.unpickle("test_model_post_qsm_correct_segments.pickle")
+    # combined_cloud.calc_cylinders()
+    cylinder,base_plot = combined_cloud.get_voxel(-2,-2,-3,2,fidelity = .6)
+    base_plot.write_html("results/segment_test_plot_no_continuation.html")
+    cylinders_line_plotting(cylinder, scale_factor=1,file_name="test_plot",base_fig=base_plot)
     
 
 
 if __name__ == "__main__":
-    folder = r"C:\Users\johnh\Documents\LiDAR\tiled_scans"
-    model = Ecomodel()
-    combined_cloud = Ecomodel.combine_las_files(folder,model)
-    process_entire_pointcloud(combined_cloud)
+    # folder = r"C:\Users\johnh\Documents\LiDAR\tiled_scans"
+    # model = Ecomodel()
+    # combined_cloud = Ecomodel.combine_las_files(folder,model)
+    # process_entire_pointcloud(Ecomodel())
     # Example usage
     # folder = os.environ.get("DATA_FOLDER_FILEPATH") + "tiled_scans"
     # model = Ecomodel()
@@ -1188,16 +1184,16 @@ if __name__ == "__main__":
     # combined_cloud.get_qsm_segments(40000)
     # combined_cloud.recombine_tiles()
     # combined_cloud.pickle("test_model_post_qsm_correct_segments.pickle")
-    # combined_cloud = Ecomodel.unpickle("test_model_post_qsm_correct_segments.pickle")
+    combined_cloud = Ecomodel.unpickle("test_model_post_qsm_correct_segments.pickle")
 
-    # # Palm
-    # # cylinder,base_plot = combined_cloud.get_voxel(-15,-3,-3,5,fidelity = .3)
-    # # # Small Voxel
-    # # cylinder,base_plot = combined_cloud.get_voxel(-11,1,-1,3,fidelity = 1)
-    # # # Large Voxel
-    # cylinder,base_plot = combined_cloud.get_voxel(-2,-2,-3,2,fidelity = .6)
-    # base_plot.write_html("results/segment_test_plot_no_continuation.html")
-    # cylinders_line_plotting(cylinder, scale_factor=1,file_name="test_plot",base_fig=base_plot)
+    # Palm
+    # cylinder,base_plot = combined_cloud.get_voxel(-15,-3,-3,5,fidelity = .3)
+    # # Small Voxel
+    # cylinder,base_plot = combined_cloud.get_voxel(-11,1,-1,3,fidelity = 1)
+    # # Large Voxel
+    cylinder,base_plot = combined_cloud.get_voxel(-2,-2,-3,2,fidelity = .6)
+    base_plot.write_html("results/segment_test_plot_no_continuation.html")
+    cylinders_line_plotting(cylinder, scale_factor=1,file_name="test_plot",base_fig=base_plot)
     # cylinders_plotting(cylinder,base_fig=base_plot)
     # combined_cloud.calc_volumes()
     # subdivided_cloud = combined_cloud.subdivide_tiles(cube_size = 10)

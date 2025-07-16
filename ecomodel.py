@@ -614,6 +614,21 @@ class Ecomodel:
                 print("Failed to create cylinder: ",E)
                 continue
 
+            rotvec = Rotation.from_rotvec(axis)
+            rotated_cloud = rotvec.as_matrix() @ Q0.T
+            rotated_cloud = rotated_cloud.T
+            # rotated_cloud = rotvec.apply(Q0)
+            I = np.argsort(rotated_cloud[:,2])
+            bot = I[:int(len(I)*.1)]
+            t = I[int(len(I)*.9):]
+            bottom = Q0[bot]
+            top = Q0[t]
+            start = np.mean(bottom,axis=0)
+            end = np.mean(top,axis=0)
+            l = np.linalg.norm(end-start)
+            # start_idx = np.argmin(rotated_cloud[:,2])
+            # start = Q0[start_idx]
+
             tile.cylinder_starts = np.concatenate([tile.cylinder_starts,np.array([start])])
             tile.cylinder_axes = np.concatenate([tile.cylinder_axes,np.array([axis])])
             tile.cylinder_lengths = np.append(tile.cylinder_lengths,l)

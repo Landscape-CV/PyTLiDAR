@@ -581,8 +581,11 @@ class Ecomodel:
             Q0 = tile.cloud[seg_mask]
             voxel_mask = np.all((Q0< max_bound) & (Q0 >min_bound),axis = 1)
             Q0 = Q0[voxel_mask]
-            pcd.points = o3d.utility.Vector3dVector(Q0)
             
+            clustering = DBSCAN(eps=.05, min_samples=5).fit(Q0)
+            db_mask = clustering.labels_ != -1
+            Q0 = Q0[db_mask]
+            pcd.points = o3d.utility.Vector3dVector(Q0)
 
             
             try:

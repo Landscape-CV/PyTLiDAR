@@ -13,7 +13,7 @@ class RobustCylinderFitter:
 
     Usage: 
     >>> fitter = RobustCylinderFitting()
-    >>> X, Y, Z, r, l = fitter.fit(point_cloud_of_cylinder)
+    >>> start, axis,  r, l = fitter.fit(point_cloud_of_cylinder)
     """
     def __init__(self):
         pass
@@ -32,17 +32,22 @@ class RobustCylinderFitter:
             l: (float) length of cylinder
         """
         # Task 1: get cylinder orientation. 
-        # point_cloud = self._normalize_pointcloud(point_cloud)
-        pc1, pc2, pc3 = self._get_pcs(point_cloud)
+        point_cloud, data_mean = self._normalize_pointcloud(point_cloud)
+        pc1, pc2, pc3, mean = self._get_pcs(point_cloud)
         l = self._get_length(point_cloud, pc1)
         
         # Task 2: Robust circle fitting
         x, y, r = self._fit_circle(point_cloud, pc2, pc3)
 
         # Task 3: Cylinder Start and axis
-        X, Y, Z = self.get_cylinder_start(pc1, pc2, x, y)
+        center = self.get_cylinder_center(pc2, pc3, x, y, mean)
         axis = self.get_cylinder_axis(pc1)
-        return (X, Y, Z), axis,  r, l
+        start = self.get_cylinder_start(pc2, pc3, center, axis, l)
+
+        # Return all data back to unnormalized.
+        start = start + data_mean
+
+        return start, axis,  r, l
 
     def get_cylinder_axis(self, pc1):
         """
@@ -53,19 +58,19 @@ class RobustCylinderFitter:
         unit_vector = pc1 / np.linalg.norm(pc1)
         return unit_vector
 
-    def get_cylinder_start(self, pc1, pc2, x, y):
+    def get_cylinder_start(self, pc2, pc3, center, axis, l):
         """
         Get start according to equation: 
-
-        a*v1 + b*v1
         """
-        start = pc1*x + pc2*y
-        X = start[0]
-        Y = start[1]
-        Z = start[2]
-        return X, Y, Z
+        start = center - (l/2) * axis
+        return start
 
-
+    def get_cylinder_center(self, pc2, pc3, x, y, mcd_mean):
+        """
+        PC2 (v1) and PC3 (vo)
+        """
+        center = pc2*x + pc3*y 
+        return center
 
     def _get_pcs(self, point_cloud):
         """
@@ -79,12 +84,14 @@ class RobustCylinderFitter:
                 covariance = DetMCD().calculate_covariance(point_cloud)
             except:
                 raise Exception("Failed to find covariance")
-                
+
+        covariance = mcd.calculate_covariance(point_cloud)
+        mean = mcd.location_
         U, S, Vt = np.linalg.svd(covariance, full_matrices=False)
         first_pc = Vt[0, :] 
         second_pc = Vt[1, :] 
         third_pc = Vt[2, :] 
-        return first_pc, second_pc, third_pc
+        return first_pc, second_pc, third_pc, mean
 
 
     def _normalize_pointcloud(self, point_cloud):
@@ -93,7 +100,7 @@ class RobustCylinderFitter:
         """
         mean = np.mean(point_cloud, axis=0)
         normalized = point_cloud - mean
-        return normalized
+        return normalized, mean
     
     def _get_length(self, cylinder, pc1):
         """
@@ -112,8 +119,8 @@ class RobustCylinderFitter:
         projection1 = np.dot(point_cloud, pc2)
         projection2 = np.dot(point_cloud, pc3)
         circle_projection = np.array([projection1, projection2])
-        circle_projection = np.transpose(circle_projection)
-        x, y, r = self._WRLTS(circle_projection) # For Me WRLTS had better results on tree branches.
+        self.circle_projection = np.transpose(circle_projection)
+        x, y, r = self._WRLTS(self.circle_projection) # For Me WRLTS had better results on tree branches.
         return x, y, r
     
     def _RLTS(self, point_cloud):
@@ -171,13 +178,18 @@ class RobustCylinderFitter:
         e_sorted_indices = np.argsort(e)
         sorted_pointcloud = point_cloud[e_sorted_indices]
         top_h_points = sorted_pointcloud[:h, :]
-        
 
         # Then iterate to find better points.
         for i in range(100):
-            if h<4:
-                break
-            x, y, r, s = hyperSVD(top_h_points)
+            try:
+                x, y, r, s = hyperSVD(top_h_points)
+            except Exception as e:
+                print("No circle")
+                x = 0
+                y = 0 
+                r = 0
+                s = 0
+                return x, y, r
             e = self._compute_residuals(point_cloud, x, y, r) # Nx3
 
             #Weighting: 
@@ -208,4 +220,3 @@ class RobustCylinderFitter:
         """
         e = np.sqrt(np.square(q[:, 0] - a0) - np.square(q[:, 1] - b0)) - r0
         return e
-    

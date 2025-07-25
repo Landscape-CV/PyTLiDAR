@@ -16,3 +16,4 @@ results*
 Dataset/fairchild_lidar
 .idea/
 test.py
+ecomodel_run.py

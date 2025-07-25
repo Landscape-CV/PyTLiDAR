@@ -396,7 +396,7 @@ def segment_point_cloud(tile, max_dist = .16, base_height = .3, layer_size =.3):
     print("Connect More Segments")
     segments,not_explored = connect_segments(pcd_tree,pcd,segments,not_explored,filtered_tree_bases,max_dist,network,False,False)
     print("Connect Final Segments")
-    segments,not_explored = connect_segments(pcd_tree,pcd,segments,not_explored,filtered_tree_bases,max_dist*1.5,network,True,True)
+    # segments,not_explored = connect_segments(pcd_tree,pcd,segments,not_explored,filtered_tree_bases,max_dist*1.5,network,True,True)
     print("Fix Overlap")
     segments = fix_overlap(segments,center_points,network)
     print("Number of segments", len(segments))

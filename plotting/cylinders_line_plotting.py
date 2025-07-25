@@ -56,7 +56,7 @@ def cylinders_line_plotting(cylinders, scale_factor=1, num_points = 20, file_nam
                 #    color=color,
                 #    opacity=0.8
                 #),
-                name=f'Radius: {radius:.2f}',
+                name=f'Radius: {radius:.3f}',
                 showlegend = False
             ))
         else:

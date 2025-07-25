@@ -39,7 +39,7 @@ from GBSeparation.remove_leaves import LeafRemover
 from robpy.covariance import DetMCD,FastMCD
 from sklearn.covariance import MinCovDet
 
-from Utils.RobustCylinderFitting import RobustCylinderFitter
+from Utils.RobustCylinderFitting import RobustCylinderFitterEcomodel
 
 dotenv.load_dotenv()
 
@@ -99,7 +99,7 @@ class Ecomodel:
                 band_size (float): Size of the bands to find ground.
                 threshold (float): number of points per square xy unit.
         Returns:        
-                replaces tile.cloud with a point cloud with the ground removed.
+                numpy.ndarray: Filtered point cloud, shape (n_points, 3).
         """
         print("Filtering Ground")
         new_min_z = float('inf')
@@ -113,65 +113,46 @@ class Ecomodel:
             # prev_len = 1
             max_band_points = 0
             max_band = None
-
-            # Iterate over horizontal slices of the point cloud of height 'band_size'
-
-            for i in range(int( z_range/band_size + 1 )):
-                # print("Analyzing slice", i)
-
+            for i in range(int(z_range/band_size+1)):
+                
                 band_min = tile.min_z + i * band_size
                 band_max = tile.min_z + (i + 1) * band_size
-
-                # Extract a horizontal slice of the point cloud for band i along the Z-axis.
-
                 mask = (tile.cloud[:, 2] >= band_min) & (tile.cloud[:, 2] < band_max)
                 band = tile.cloud[mask]
-
-                # Pick the lowest Z-band which has a high enough point density to be 
-                # considered the ground.
-
-                if len(band) > (x_range*y_range*threshold):
+                if len(band) >(x_range*y_range*threshold):
                     max_band = band
                     max_band_points = len(band)
                     break
                 if len(band) > max_band_points:
                     max_band = band
                     max_band_points = len(band)
-            
-            # I think we can remove this if statement and just say band = max_band
             if len(band) != max_band_points:
                 band = max_band  
-
-            
             using_pt = False
             if type(band) == torch.Tensor:
                 using_pt = True
                 band = band.cpu().numpy()
-
-
+            ground_start = min
             line = linear_model.RANSACRegressor(random_state = 0)
-
-            # What is the role of this line. Seems like we are removing a very small 
-            # points off the top of the band point cloud?  
             band = band[band[:,2] < float(band_max)-.2*float(band_size)]
+            print(type(band))
+            print(band.shape)
 
-            # Use the RANSAC algorithm to find a model of a plane that matches the surface
-            # of the ground. 
+            # Use the RANSAC algorithm to find a model that matches the data of the???
             try:
                 line.fit(band[:,0:2],band[:,2]) # Get a
             except Exception as e:
                 print(e)
                 tile.to_xyz('failed_tile.xyz')
                 print("Save successful")
+
+
             
             if using_pt:
                 ground_line = torch.Tensor(line.predict(tile.get_cloud_as_array()[:, 0:2])).to(self.device)
-                print("MAX Ground Level: ", ground_line+offset)
-                
                 I = tile.cloud[:, 2] > ground_line+offset
             else:
                 I = tile.cloud[:, 2] > line.predict(tile.cloud[:, 0:2]) + offset
-                print("MAX Ground Level: ", line.predict(tile.cloud[:, 0:2]) + offset)
             # I = tile.cloud[:, 2] > band_max+offset
             point_data = tile.point_data[I]
             tile.cloud = tile.cloud[I]
@@ -491,7 +472,7 @@ class Ecomodel:
         Returns:        
                 numpy.ndarray: Cylinders, shape (n_cylinders, 3).
         """
-        for i,tile in enumerate(self._raw_tiles):
+        for i,tile in enumerate(self.tiles.flatten()):
             if tile == 0:
                 continue
           
@@ -524,62 +505,9 @@ class Ecomodel:
 
             return cylinder, cyl_plot
     
-    def calc_cylinders(self):
-        """
-        Computes the cylinders
-
-        Parameters: 
-            tile: 
-        """
-
-        fitter = RobustCylinderFitter()
-
-        for i,tile in enumerate(self._raw_tiles):#enumerate(self.tiles.flatten()):
-            tile:Tile
-
-            total_segments = np.max(tile.cluster_labels)
-
-
-
-            for segment_index in np.unique(tile.cluster_labels):
-                print(segment_index)
-                if segment_index < 0:
-                    continue
-                
-
-                segment_indices = np.where(tile.cluster_labels == segment_index)[0]
-                segment = tile.cloud[segment_indices]
-                dist =cdist(segment,segment)
-                np.fill_diagonal(dist,1.0)
-                avg_closest_point_dist = np.mean(np.min(dist,axis = 1))
-                if avg_closest_point_dist > .02: #can make this a parameter
-                    tile.cluster_labels[segment_indices]=-2
-                    continue
-                if len(segment)<5:
-                    continue
-                
-                try:
-                    start, axis, r, l = fitter.fit(segment)
-                except Exception as E:
-                    if "Failed to find covariance" not in str(E):
-                        raise E
-                    print("Failed to create cylinder: ",E)
-                    continue
-
-                tile.cylinder_starts = np.concatenate([tile.cylinder_starts,np.array([start])])
-                tile.cylinder_axes = np.concatenate([tile.cylinder_axes,np.array([axis])])
-                tile.cylinder_lengths = np.append(tile.cylinder_lengths,l)
-                tile.cylinder_radii = np.append(tile.cylinder_radii,r)
-
-
-            
-
-
-
-
     def calc_volumes(self,tile, segments,min_bound,max_bound):
         """
-        UNDER CONSTRUCTION, NOT USED
+        Get cylinder information
         """
         print("Calculating volumes")
 
@@ -590,7 +518,7 @@ class Ecomodel:
         range_mask = np.arange(len(tile.cluster_labels))
         mcd = FastMCD()
 
-        fitter = RobustCylinderFitter()
+        fitter = RobustCylinderFitterEcomodel()
         for label in np.unique(segments):
             if label <0:
                 continue
@@ -600,8 +528,11 @@ class Ecomodel:
             Q0 = tile.cloud[seg_mask]
             voxel_mask = np.all((Q0< max_bound) & (Q0 >min_bound),axis = 1)
             Q0 = Q0[voxel_mask]
-            pcd.points = o3d.utility.Vector3dVector(Q0)
             
+            clustering = DBSCAN(eps=.05, min_samples=5).fit(Q0)
+            db_mask = clustering.labels_ != -1
+            Q0 = Q0[db_mask]
+            pcd.points = o3d.utility.Vector3dVector(Q0)
 
             
             try:
@@ -621,17 +552,14 @@ class Ecomodel:
                 tile.cluster_labels[seg_mask]=-1
                 continue
 
-            lowest_point = Q0[np.argmin(Q0[:,2])]
             if len(Q0)<5:
                     continue
             
-            try:
-                start, axis, r, l = fitter.fit(Q0)
-            except Exception as E:
-                if "Failed to find covariance" not in str(E):
-                    raise E
-                print("Failed to create cylinder: ",E)
+            cylinder_params = fitter.fit(Q0)
+            if cylinder_params is None:
                 continue
+            else:
+                start, axis, r, l = cylinder_params
 
             tile.cylinder_starts = np.concatenate([tile.cylinder_starts,np.array([start])])
             tile.cylinder_axes = np.concatenate([tile.cylinder_axes,np.array([axis])])
@@ -845,9 +773,36 @@ class Ecomodel:
 
 
 class Tile:
-    """A Tile represents a subset of the lidar scan data, and stores the attributes relavent to that tile specifically (cylinders, leafs, etc. )
-    
-    
+    """A Tile represents a subset of the lidar scan data, 
+    and stores the attributes relavent to that tile specifically (cylinders, leafs, etc. )
+
+    A point cloud tile contains N points and B branch segments.
+
+    Attributes: 
+        device (str): Device used for matrix operations
+        cloud (Nx3 matrix): point cloud representing x, y, z points of tile
+        point_data (NxD matrix): point data as well as location (intensity, labels etc)
+        min_x (float): Minimum x value among all N points 
+        min_y
+        min_z
+        max_x
+        max_y
+        max_z
+        contains_ground (bool): Boolean if the tile current contains ground points
+        cover_sets (Nx1 array): Array representing which cover set label is given to points 
+        cluster_labels (Nx1 array): Array representing the labels given to each branch segment where
+            -2 = Point not considered as part of a branch segment
+            -3 = Point is apart of a trunk
+
+        segment_labels (Nx1 array): Array represeting the labels given to each tree in a tile where
+            -1 = Not a tree
+        trunk_points (Nx1 array): Array representing whether point is a part of the trunk or not.
+        cylinder_starts (Bx3 matrix): Matrix representing the cylinder start points in space of B branch segments 
+        cylinder_radii (Bx1 array): Array representing the radii of all B branch segments
+        cylinder_axes (Bx3 matrix): Matrix representing the unit vector axis of each B branch segment
+        cylinder_lengths (Bx1 array): Array representing the length of each B branch segments.  
+        branch_labels: UNUSED
+        branch_orders: UNUSED
     """
 
     def __init__(self, cloud, point_data = None,contains_ground = False):
@@ -1079,10 +1034,7 @@ class Tile:
         self.trunk_points =np.concatenate([self.trunk_points,tile.trunk_points]) if len(tile.trunk_points)>0 else self.trunk_points
 
 
-def save_point_cloud(name):
-    print(len(combined_cloud.tiles.flatten()))
-    print(combined_cloud.tiles.flatten()[0].cloud.shape)
-    np.savetxt(f"test_outputs/{name}", combined_cloud.tiles.flatten()[0].cloud)
+
     
 def process_entire_pointcloud(combined_cloud: Ecomodel):
     """
@@ -1099,14 +1051,6 @@ def process_entire_pointcloud(combined_cloud: Ecomodel):
     # Remove ground
     # normalize tiles
     
-    # ------------------- 7/13/2025 Testing
-    combined_cloud.subdivide_tiles(2)
-    combined_cloud.filter_ground(combined_cloud.tiles.flatten())
-    save_point_cloud("filtered_ground.xyz")    
-    combined_cloud.remove_duplicate_points()
-    combined_cloud.segment_trees()
-
-    # -------------------
 
     
     # combined_cloud._raw_tiles[0].to_xyz("raw_tiles_0.xyz")
@@ -1164,19 +1108,18 @@ def process_entire_pointcloud(combined_cloud: Ecomodel):
     # combined_cloud.pickle("test_model_trees_segmented.pickle")
     # combined_cloud.unpickle("test_model_trees_segmented.pickle")
     # combined_cloud.get_qsm_segments()
-    # combined_cloud = Ecomodel.unpickle("test_model_post_qsm_correct_segments.pickle")
-    # # combined_cloud.calc_cylinders()
-    # cylinder,base_plot = combined_cloud.get_voxel(-2,-2,-3,2,fidelity = .6)
-    # base_plot.write_html("results/segment_test_plot_no_continuation.html")
-    # cylinders_line_plotting(cylinder, scale_factor=1,file_name="test_plot",base_fig=base_plot)
+    combined_cloud = Ecomodel.unpickle("test_model_post_qsm_correct_segments.pickle")
+    cylinder,base_plot = combined_cloud.get_voxel(-2,-2,-3,2,fidelity = .6)
+    base_plot.write_html("results/segment_test_plot_no_continuation.html")
+    cylinders_line_plotting(cylinder, scale_factor=1,file_name="test_plot",base_fig=base_plot)
     
 
 
 if __name__ == "__main__":
-    folder = r"G:\Projects\TreeCanopyLidar\Datasets\tile_scan_segment"
-    model = Ecomodel()
-    combined_cloud = Ecomodel.combine_las_files(folder,model)
-    process_entire_pointcloud(combined_cloud)
+    # folder = r"C:\Users\johnh\Documents\LiDAR\tiled_scans"
+    # model = Ecomodel()
+    # combined_cloud = Ecomodel.combine_las_files(folder,model)
+    # process_entire_pointcloud(Ecomodel())
     # Example usage
     # folder = os.environ.get("DATA_FOLDER_FILEPATH") + "tiled_scans"
     # model = Ecomodel()
@@ -1214,16 +1157,16 @@ if __name__ == "__main__":
     # combined_cloud.get_qsm_segments(40000)
     # combined_cloud.recombine_tiles()
     # combined_cloud.pickle("test_model_post_qsm_correct_segments.pickle")
-    # combined_cloud = Ecomodel.unpickle("test_model_post_qsm_correct_segments.pickle")
+    combined_cloud = Ecomodel.unpickle("test_model_post_qsm_correct_segments.pickle")
 
-    # # Palm
-    # # cylinder,base_plot = combined_cloud.get_voxel(-15,-3,-3,5,fidelity = .3)
-    # # # Small Voxel
-    # # cylinder,base_plot = combined_cloud.get_voxel(-11,1,-1,3,fidelity = 1)
-    # # # Large Voxel
-    # cylinder,base_plot = combined_cloud.get_voxel(-2,-2,-3,2,fidelity = .6)
-    # base_plot.write_html("results/segment_test_plot_no_continuation.html")
-    # cylinders_line_plotting(cylinder, scale_factor=1,file_name="test_plot",base_fig=base_plot)
+    # Palm
+    # cylinder,base_plot = combined_cloud.get_voxel(-15,-3,-3,5,fidelity = .3)
+    # # Small Voxel
+    # cylinder,base_plot = combined_cloud.get_voxel(-11,1,-1,3,fidelity = 1)
+    # # Large Voxel
+    cylinder,base_plot = combined_cloud.get_voxel(-2,-2,-3,2,fidelity = .6)
+    base_plot.write_html("results/segment_test_plot_no_continuation.html")
+    cylinders_line_plotting(cylinder, scale_factor=1,file_name="test_plot",base_fig=base_plot)
     # cylinders_plotting(cylinder,base_fig=base_plot)
     # combined_cloud.calc_volumes()
     # subdivided_cloud = combined_cloud.subdivide_tiles(cube_size = 10)

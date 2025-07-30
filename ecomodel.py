@@ -40,6 +40,7 @@ from robpy.covariance import DetMCD,FastMCD
 from sklearn.covariance import MinCovDet
 
 from Utils.RobustCylinderFitting import RobustCylinderFitterEcomodel
+from Utils.metrics import Metrics
 
 dotenv.load_dotenv()
 
@@ -58,6 +59,8 @@ class Ecomodel:
         self.max_y = float('-inf')
         self.max_z = float('-inf')
         self.mean = np.zeros(3)
+
+        self.metrics = Metrics()
     def add_tile(self, tile):
         
         self.min_x = min(self.min_x, tile.min_x)
@@ -503,7 +506,13 @@ class Ecomodel:
     
     def calc_volumes(self,tile, segments,min_bound,max_bound):
         """
-        Get cylinder information
+        Get cylinder information inside a cube defined by min_bound and max_bound from a tiles point cloud.  
+
+        Args:
+            tile: Tile object from which to calculate cylinders.
+            segments: 1xD array containing cluster label value for D labels.
+            min_bound: 1x3 X,Y,Z array representing the min cube corner.
+            max_bound: 1x3 X,Y,Z array represeting the max cube corner.
         """
         print("Calculating volumes")
 
@@ -553,9 +562,13 @@ class Ecomodel:
             
             cylinder_params = fitter.fit(Q0)
             if cylinder_params is None:
+                self.metrics.increment_branch_fit_accuracy(False)
                 continue
             else:
                 start, axis, r, l = cylinder_params
+                self.metrics.update_accuracy(Q0, start, axis, r)
+                self.metrics.update_mean_squared_error(Q0, start, axis, r)
+                self.metrics.increment_branch_fit_accuracy(True)
 
             tile.cylinder_starts = np.concatenate([tile.cylinder_starts,np.array([start])])
             tile.cylinder_axes = np.concatenate([tile.cylinder_axes,np.array([axis])])
